@@ -52,6 +52,7 @@ class UserApiTest {
         System.setProperty("spring.datasource.username", postgres.getUsername());
         System.setProperty("spring.datasource.password", postgres.getPassword());
         System.setProperty("spring.jpa.hibernate.ddl-auto", "create-drop");
+        System.setProperty("app.kafka.enabled", "false");
 
         context = new AnnotationConfigWebApplicationContext();
         context.register(AppConfig.class, JpaConfig.class, WebConfig.class);

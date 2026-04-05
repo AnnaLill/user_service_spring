@@ -2,29 +2,29 @@ package org.example.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.example.config.AppConfig;
-import org.example.config.JpaConfig;
-import org.example.config.WebConfig;
 import org.example.dto.CreateUserDto;
 import org.example.dto.UpdateUserDto;
 import org.example.repository.UserRepository;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockServletContext;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
-import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.Iterator;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -33,7 +33,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+@SpringBootTest
+@AutoConfigureMockMvc
 @Testcontainers
+@ActiveProfiles("test")
 class UserApiTest {
 
     @Container
@@ -42,39 +45,26 @@ class UserApiTest {
             .withUsername("postgres")
             .withPassword("postgres");
 
-    private static AnnotationConfigWebApplicationContext context;
-    private static MockMvc mockMvc;
-    private static ObjectMapper objectMapper;
-
-    @BeforeAll
-    static void setupSpringAndMockMvc() {
-        System.setProperty("spring.datasource.url", postgres.getJdbcUrl());
-        System.setProperty("spring.datasource.username", postgres.getUsername());
-        System.setProperty("spring.datasource.password", postgres.getPassword());
-        System.setProperty("spring.jpa.hibernate.ddl-auto", "create-drop");
-        System.setProperty("app.kafka.enabled", "false");
-
-        context = new AnnotationConfigWebApplicationContext();
-        context.register(AppConfig.class, JpaConfig.class, WebConfig.class);
-        context.setServletContext(new MockServletContext());
-        context.refresh();
-
-        WebApplicationContext webApplicationContext = context;
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
-
-        objectMapper = new ObjectMapper().findAndRegisterModules();
+    @DynamicPropertySource
+    static void postgresProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "create-drop");
     }
 
-    @AfterAll
-    static void closeContext() {
-        if (context != null) {
-            context.close();
-        }
-    }
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @BeforeEach
     void clearUsers() {
-        context.getBean(UserRepository.class).deleteAll();
+        userRepository.deleteAll();
     }
 
     @Test
@@ -86,7 +76,7 @@ class UserApiTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isCreated())
-                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.parseMediaType("application/*+json")))
                 .andReturn();
 
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
@@ -119,18 +109,28 @@ class UserApiTest {
     }
 
     @Test
-    @DisplayName("GET /users — 200 и список пользователей")
-    void getAllUsersReturnsOkAndArray() throws Exception {
+    @DisplayName("GET /users — 200 и HAL collection (_embedded)")
+    void getAllUsersReturnsOkAndHalEmbedded() throws Exception {
         createUserViaApi("Asasa", "asasa@gmail.com", 18);
         createUserViaApi("Bvbv", "bvbv@gmail.com", 19);
 
         MvcResult result = mockMvc.perform(get("/users"))
                 .andExpect(status().isOk())
-                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andReturn();
 
-        JsonNode array = objectMapper.readTree(result.getResponse().getContentAsString());
-        assertTrue(array.isArray());
+        JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
+        JsonNode embedded = root.path("_embedded");
+        assertTrue(embedded.isObject(), "Ожидался HAL с _embedded: " + root);
+
+        JsonNode array = null;
+        for (Iterator<String> it = embedded.fieldNames(); it.hasNext(); ) {
+            JsonNode node = embedded.get(it.next());
+            if (node != null && node.isArray()) {
+                array = node;
+                break;
+            }
+        }
+        assertNotNull(array, "В _embedded должна быть коллекция DTO");
         assertEquals(2, array.size());
     }
 

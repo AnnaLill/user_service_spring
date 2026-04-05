@@ -6,11 +6,18 @@ import org.example.dto.UserDto;
 import org.example.model.User;
 import org.example.exception.UserNotFoundException;
 import org.example.service.UserService;
+import org.springframework.hateoas.CollectionModel;
+import org.springframework.hateoas.EntityModel;
+import org.springframework.hateoas.Link;
+import org.springframework.hateoas.server.mvc.WebMvcLinkBuilder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 
 @RestController
 @RequestMapping("/users")
@@ -23,26 +30,50 @@ public class UserController {
     }
 
     @GetMapping
-    public List<UserDto> getAll() {
-        return userService.findAll().stream().map(UserController::toDto).toList();
+    public CollectionModel<UserDto> getAll() {
+        List<UserDto> dtos = userService.findAll().stream()
+                .map(UserController::toDto)
+                .toList();
+        Link selfLink = linkTo(methodOn(UserController.class).getAll()).withSelfRel();
+
+        return CollectionModel.of(dtos, selfLink);
     }
 
     @GetMapping("/{id}")
-    public UserDto getById(@PathVariable("id") Long id) {
+    public EntityModel <UserDto> getById(@PathVariable("id") Long id) {
         User user = userService.findById(id).orElseThrow(() -> new UserNotFoundException(id));
-        return toDto(user);
+        UserDto dto = toDto(user);
+
+        Link selfLink = WebMvcLinkBuilder
+                .linkTo(WebMvcLinkBuilder.methodOn(UserController.class).getById(id))
+                        .withSelfRel();
+        Link allUsersLink = WebMvcLinkBuilder
+                .linkTo(methodOn(UserController.class).getAll())
+                        .withRel("all-users");
+
+        return EntityModel.of(dto, selfLink, allUsersLink);
     }
 
     @PostMapping
-    public ResponseEntity<UserDto> create(@RequestBody CreateUserDto dto) {
+    public ResponseEntity <EntityModel <UserDto>> create(@RequestBody CreateUserDto dto) {
         User created = userService.create(dto);
-        return ResponseEntity.status(HttpStatus.CREATED).body(toDto(created));
+        UserDto userDto = toDto(created);
+
+        Link selfLink = linkTo(methodOn(UserController.class).getById(created.getId()))
+                .withSelfRel();
+        EntityModel<UserDto> model = EntityModel.of(userDto, selfLink);
+        return ResponseEntity.status(HttpStatus.CREATED).body(model);
     }
 
     @PutMapping("/{id}")
-    public UserDto update(@PathVariable("id") Long id, @RequestBody UpdateUserDto dto) {
-        User updated = userService.update(id, dto);
-        return toDto(updated);
+    public ResponseEntity <EntityModel <UserDto>> update(@PathVariable("id") Long id, @RequestBody UpdateUserDto updateDto) {
+        User updated = userService.update(id, updateDto);
+        UserDto userDto = toDto(updated);
+
+        Link selfLink = linkTo(methodOn(UserController.class).getById(id))
+                .withSelfRel();
+        EntityModel<UserDto> model = EntityModel.of(userDto, selfLink);
+        return ResponseEntity.ok(model);
     }
 
     @DeleteMapping("/{id}")
